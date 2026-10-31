@@ -28,7 +28,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: api
-          image: ghcr.io/omeraytug/churn-mlops-k8s-api:d2acfa7ed622b5d599ae6f353f5dc4491424c547
+          image: ghcr.io/omeraytug/churn-mlops-k8s-api:a12905898c7a51b61dd2a54461a01fa0d06f43ef
           ports:
             - name: http
               containerPort: 8000
