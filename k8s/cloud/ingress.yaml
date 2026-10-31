@@ -6,7 +6,7 @@ metadata:
   labels:
     app: churn-api
   annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-staging
+    cert-manager.io/cluster-issuer: letsencrypt
 spec:
   ingressClassName: traefik
   tls:
