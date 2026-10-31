@@ -265,7 +265,8 @@ jobs:
 
   docker-api-smoke:
     needs: evaluate
-    runs-on: ubuntu-latest
+    # The course cluster runs arm64, so build and test the image on the same architecture.
+    runs-on: ubuntu-24.04-arm
 
     steps:
       - uses: actions/checkout@v7
@@ -306,6 +307,9 @@ jobs:
           done
           docker logs api-smoke
           exit 1
+
+      - name: Check model version
+        run: curl -fsS http://localhost:8000/version | grep -qF "\"commit\":\"$GITHUB_SHA\""
 
       - name: Check prediction
         run: |
