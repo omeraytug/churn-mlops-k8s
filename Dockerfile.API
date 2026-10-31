@@ -23,7 +23,7 @@ RUN pip uninstall -y churn && \
 
 RUN useradd --create-home appuser
 
-COPY outputs/modell.joblib ./outputs/modell.joblib
+COPY outputs/modell.joblib outputs/matvarden.json ./outputs/
 
 USER appuser
 

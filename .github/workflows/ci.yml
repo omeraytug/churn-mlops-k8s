@@ -265,7 +265,8 @@ jobs:
 
   docker-api-smoke:
     needs: evaluate
-    runs-on: ubuntu-latest
+    # The course cluster runs arm64, so build and test the image on the same architecture.
+    runs-on: ubuntu-24.04-arm
 
     steps:
       - uses: actions/checkout@v7
@@ -306,6 +307,9 @@ jobs:
           done
           docker logs api-smoke
           exit 1
+
+      - name: Check model version
+        run: curl -fsS http://localhost:8000/version | grep -qF "\"commit\":\"$GITHUB_SHA\""
 
       - name: Check prediction
         run: |
@@ -366,9 +370,113 @@ jobs:
 
       - name: Tag and push image
         run: |
-          IMAGE="ghcr.io/pytt156/churn-mlops-pipeline:${{ github.sha }}"
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}:${GITHUB_SHA}"
           docker tag churn-score:${{ github.sha }} "$IMAGE"
           docker push "$IMAGE"
+
+  publish-api:
+    needs: docker-api-smoke
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-24.04-arm
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Download Docker image
+        uses: actions/download-artifact@v4
+        with:
+          name: docker-api-image-${{ github.sha }}
+
+      - name: Load Docker image
+        run: docker load -i api-image.tar
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Tag and push image
+        run: |
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}-api:${GITHUB_SHA}"
+          docker tag churn-api:${{ github.sha }} "$IMAGE"
+          docker push "$IMAGE"
+
+  deploy-production:
+    needs: [publish, publish-api]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    # The environment requires approval, and its secrets are only readable after approval.
+    environment:
+      name: production
+      url: http://omer-aytug.89-167-53-206.sslip.io/version
+
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.36.5
+
+      - name: Configure cluster access
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+        run: |
+          KUBECONFIG="$RUNNER_TEMP/kubeconfig"
+          printf '%s' "$KUBE_CONFIG" > "$KUBECONFIG"
+          chmod 600 "$KUBECONFIG"
+          echo "KUBECONFIG=$KUBECONFIG" >> "$GITHUB_ENV"
+
+      - name: Apply manifests
+        run: |
+          IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}-api:${GITHUB_SHA}"
+          kubectl set image -f k8s/deployment.yaml "api=$IMAGE" --local -o yaml \
+            > "$RUNNER_TEMP/deployment.yaml"
+
+          # A rejected manifest stops here, before anything in the cluster has changed.
+          kubectl apply --dry-run=server \
+            -f "$RUNNER_TEMP/deployment.yaml" -f k8s/service.yaml -f k8s/cloud/ingress.yaml
+          kubectl apply \
+            -f "$RUNNER_TEMP/deployment.yaml" -f k8s/service.yaml -f k8s/cloud/ingress.yaml
+
+      - name: Wait for rollout
+        id: rollout
+        run: kubectl rollout status deployment/churn-api --timeout=180s
+
+      - name: Verify running version through Ingress
+        id: verify
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS -m 5 http://omer-aytug.89-167-53-206.sslip.io/version \
+              | grep -qF "\"commit\":\"$GITHUB_SHA\""; then
+              echo "OK: the service runs the model from $GITHUB_SHA"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "ERROR: the service does not run the model from $GITHUB_SHA"
+          exit 1
+
+      # Only after a change has reached the cluster. Undoing after a failed apply would
+      # roll a healthy service back to an even older version.
+      - name: Roll back failed deployment
+        if: failure() && (steps.rollout.outcome == 'failure' || steps.verify.outcome == 'failure')
+        run: |
+          kubectl rollout undo deployment/churn-api
+          kubectl rollout status deployment/churn-api --timeout=180s
+
+      - name: Show deployed state
+        if: always() && steps.rollout.outcome != 'skipped'
+        run: |
+          kubectl get deployment,pods,service,ingress -l app=churn-api
+          kubectl rollout history deployment/churn-api
 
   ringlista:
     needs: evaluate
