@@ -1,6 +1,8 @@
+import json
+
 from fastapi.testclient import TestClient
 
-from churn.api import app
+from churn.api import MODEL_DIR, app
 
 
 def test_health():
@@ -9,6 +11,21 @@ def test_health():
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
+
+
+def test_version_matches_trained_model():
+    metrics = json.loads((MODEL_DIR / "matvarden.json").read_text())
+
+    with TestClient(app) as client:
+        response = client.get("/version")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "commit": metrics["commit"],
+        "run_id": metrics["run_id"],
+        "roc_auc": metrics["roc_auc"],
+        "model_sha256": metrics["model_sha256"],
+    }
 
 
 def test_predict():

@@ -1,3 +1,4 @@
+import json
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -25,6 +26,13 @@ class Prediction(BaseModel):
     churn_risk: float
 
 
+class ModelVersion(BaseModel):
+    commit: str
+    run_id: str
+    roc_auc: float
+    model_sha256: str
+
+
 def to_row(kund: Kund) -> pd.DataFrame:
     df = pd.DataFrame([kund.model_dump()])
     return skapa_features(df)[FEATURES]
@@ -33,6 +41,7 @@ def to_row(kund: Kund) -> pd.DataFrame:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.model = joblib.load(MODEL_DIR / "modell.joblib")
+    app.state.version = json.loads((MODEL_DIR / "matvarden.json").read_text())
     yield
 
 
@@ -42,6 +51,11 @@ app = FastAPI(title="Churn Prediction API", lifespan=lifespan)
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/version", response_model=ModelVersion)
+def version() -> dict[str, str | float]:
+    return app.state.version
 
 
 @app.post("/predict", response_model=Prediction)
