@@ -1,0 +1,25 @@
+# Bara i molnet: lokalt i kind nås tjänsten med kubectl port-forward.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: churn-api
+  labels:
+    app: churn-api
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-staging
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts: [omer-aytug.89-167-53-206.sslip.io]
+      secretName: churn-api-tls
+  rules:
+    - host: omer-aytug.89-167-53-206.sslip.io
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: churn-api
+                port:
+                  name: http
