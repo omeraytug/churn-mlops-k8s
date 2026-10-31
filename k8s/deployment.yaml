@@ -1,0 +1,70 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: churn-api
+  labels:
+    app: churn-api
+spec:
+  replicas: 2
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      # Starta en ny pod innan en gammal tas bort, så att tjänsten aldrig tappar kapacitet.
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: churn-api
+  template:
+    metadata:
+      labels:
+        app: churn-api
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: api
+          image: ghcr.io/omeraytug/churn-mlops-k8s-api:d2acfa7ed622b5d599ae6f353f5dc4491424c547
+          ports:
+            - name: http
+              containerPort: 8000
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          # Uppmätt: cirka 130 MiB i drift. Kvoten är 250m och 384Mi för hela namnrymden.
+          # Fyra poddar måste få plats, eftersom poddar som stängs ner fortfarande räknas.
+          # I kind med samma kvot: 22 s per utrullning med 75m/120Mi, 12 s med dessa värden.
+          resources:
+            requests:
+              cpu: 60m
+              memory: 96Mi
+            limits:
+              cpu: 500m
+              memory: 384Mi
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 5
+            failureThreshold: 24
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+          lifecycle:
+            # Ge Service och Ingress tid att sluta skicka trafik innan podden stängs.
+            preStop:
+              sleep:
+                seconds: 5
